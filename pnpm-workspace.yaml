@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+  - "examples/*"
+  - "website"
+
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - rolldown-plugin-dts@0.28.7
+  - tsdown@0.23.1

@@ -1,0 +1,9 @@
+{
+  // Covers only the src that is distributed. isolatedDeclarations is required so that oxc can generate the type declarations
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "isolatedDeclarations": true,
+    "declaration": true
+  },
+  "include": ["src"]
+}

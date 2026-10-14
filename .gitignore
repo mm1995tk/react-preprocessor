@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+dist/
+.direnv/
+.pnpm-store/
+*.tsbuildinfo
+# Left by an interrupted test run (they live inside test/ so that the package's tsconfig.json includes them)
+packages/react-preprocessor/test/eslint-*/
+packages/react-preprocessor/test/type-service-*/

@@ -1,0 +1,48 @@
+name: Pages
+
+# Pushing to main builds the website and deploys it to GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# The default for every job. Only `deploy` asks for more
+permissions:
+  contents: read
+
+# A deployment in progress is allowed to finish. Of the ones waiting, only the latest runs
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # Installs dependencies and runs their code, so it must not be able to deploy
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - run: nix develop -c pnpm install --frozen-lockfile
+      # The website uses the built package
+      - run: nix develop -c pnpm build
+      - run: nix develop -c pnpm -F website build
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: website/dist
+
+  # Deploys what `build` uploaded. No dependency is installed here
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      # Needed by deploy-pages to prove that the artifact comes from this workflow
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

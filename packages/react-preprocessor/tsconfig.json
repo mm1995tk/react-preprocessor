@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2023", "dom"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react-preprocessor",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "react-preprocessor": ["./src/index.ts"],
+      "react-preprocessor/jotai": ["./src/jotai.ts"],
+      "react-preprocessor/jsx-runtime": ["./src/jsx-runtime.ts"],
+      "react-preprocessor/jsx-dev-runtime": ["./src/jsx-dev-runtime.ts"]
+    },
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src", "test", "*.ts"],
+  // The transform output is not type-checked (the runtime shape of props does not match the declared types)
+  "exclude": [
+    "test/fixtures/*/output.tsx",
+    "test/fixtures/*/compiled.tsx",
+    "test/typed/output",
+    "test/other-project"
+  ]
+}

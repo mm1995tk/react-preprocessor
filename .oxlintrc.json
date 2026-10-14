@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "react", "import", "promise", "vitest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    // `import React` is not needed with the automatic JSX runtime of React 17+
+    "react/react-in-jsx-scope": "off",
+    // Mistakes the cases of `r.match("kind", { ok: () => <p /> })` for components defined during render
+    "react/no-unstable-nested-components": "off",
+    // Fixture names are used as test names as they are
+    "vitest/valid-title": "off"
+  },
+  "env": {
+    "builtin": true,
+    "browser": true,
+    "node": true,
+    "es2024": true
+  },
+  "overrides": [
+    {
+      "files": ["website/src/**"],
+      "rules": {
+        // `?demo` and `?rejected` are virtual modules made by the Vite config. The linter looks at the file itself
+        "import/default": "off",
+        // Mistakes the block of `reactive.effect(() => { document.title = ... })` for render code
+        "react/immutability": "off",
+        "import/no-unassigned-import": ["warn", { "allow": ["**/*.css"] }]
+      }
+    }
+  ],
+  // Fixtures are the inputs and outputs of the transform. They are not linted
+  "ignorePatterns": [
+    "node_modules",
+    "dist",
+    "packages/react-preprocessor/test/fixtures",
+    "packages/react-preprocessor/test/typed/output",
+    // Left by an interrupted test run
+    "packages/react-preprocessor/test/eslint-*",
+    "packages/react-preprocessor/test/type-service-*",
+    // Misuses that the types reject are written on purpose
+    "**/*.test-d.tsx"
+  ]
+}

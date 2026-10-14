@@ -1,0 +1,119 @@
+{
+  "name": "react-preprocessor",
+  "version": "0.1.1",
+  "description": "See in the types which values re-render your React component. Lowered at build time to plain React",
+  "keywords": [
+    "babel-plugin",
+    "eslint-plugin",
+    "jotai",
+    "lens",
+    "nextjs",
+    "oxlint",
+    "preprocessor",
+    "react",
+    "state",
+    "typescript",
+    "vite-plugin",
+    "webpack-loader"
+  ],
+  "homepage": "https://mm1995tk.github.io/react-preprocessor/",
+  "bugs": "https://github.com/mm1995tk/react-preprocessor/issues",
+  "license": "MIT",
+  "author": "mm1995tk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mm1995tk/react-preprocessor.git",
+    "directory": "packages/react-preprocessor"
+  },
+  "bin": {
+    "react-preprocessor": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    },
+    "./babel": {
+      "types": "./dist/babel.d.mts",
+      "default": "./dist/babel.mjs"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.mts",
+      "default": "./dist/vite.mjs"
+    },
+    "./jsx-runtime": {
+      "types": "./dist/jsx-runtime.d.mts",
+      "default": "./dist/jsx-runtime.mjs"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./dist/jsx-dev-runtime.d.mts",
+      "default": "./dist/jsx-dev-runtime.mjs"
+    },
+    "./loader": {
+      "types": "./dist/loader.d.mts",
+      "default": "./dist/loader.mjs"
+    },
+    "./eslint": {
+      "types": "./dist/eslint.d.mts",
+      "default": "./dist/eslint.mjs"
+    },
+    "./jotai": {
+      "types": "./dist/jotai.d.mts",
+      "default": "./dist/jotai.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc && tsc -p tsconfig.build.json",
+    "prepack": "tsdown && cp ../../README.md ../../LICENSE ."
+  },
+  "dependencies": {
+    "@babel/core": "^8.0.7"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "eslint": "^10.12.0",
+    "happy-dom": "^20.14.6",
+    "jotai": "^3.0.1",
+    "publint": "^0.3.25",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsdown": "^0.23.1",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
+  },
+  "peerDependencies": {
+    "@types/react": ">=18",
+    "jotai": ">=2",
+    "react": ">=18",
+    "typescript": ">=7",
+    "vite": ">=6"
+  },
+  "peerDependenciesMeta": {
+    "@types/react": {
+      "optional": true
+    },
+    "jotai": {
+      "optional": true
+    },
+    "typescript": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22.12"
+  }
+}

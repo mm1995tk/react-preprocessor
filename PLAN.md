@@ -1,0 +1,185 @@
+# react-preprocessor: initial plan
+
+## Goal
+
+Build syntactic sugar and a preprocessor that bring type-driven discipline to React.
+
+- Performance is not a goal. Performance is left to React and the React Compiler
+- The goal is **ergonomics and type safety**
+  - A reactive value is made explicit by the type `Reactive<T>`
+  - There is no `get` that takes the inner value out
+  - The only way to update is `update(f)`, where `f` is a **pure function from the old value to the new value**
+  - Deep structures are updated through lenses (`focus`)
+  - Derived values are written with `derive` / `reactive.derive`
+
+## Pipeline
+
+```
+React + the sugar (.tsx)
+  ↓ react-preprocessor (Babel plugin)
+Plain React (.tsx)
+  ↓ React Compiler
+Optimized React
+```
+
+- The sugar stays **valid TypeScript syntax** (no custom file extension)
+  - Existing type checking, editors, and formatters work as they are
+  - To an AI it also "just looks like TS"
+- `Reactive<T>` **exists only as a compile-time type** and has no runtime (approach A)
+- The order of the Babel plugins is "react-preprocessor → React Compiler"
+
+## What the syntax looks like
+
+```tsx
+const Counter = () => {
+  const cnt: Reactive<number> = reactive.new(0);
+  const double = cnt.derive((n) => n * 2);
+  return (
+    <>
+      now: {cnt} / double: {double}
+      <button onClick={() => cnt.update((n) => n + 1)}>inc</button>
+    </>
+  );
+};
+```
+
+↓ after the transform
+
+```tsx
+const Counter = () => {
+  const [cnt, setCnt] = useState(0);
+  const double = cnt * 2;
+  return (
+    <>
+      now: {cnt} / double: {double}
+      <button onClick={() => setCnt((n) => n + 1)}>inc</button>
+    </>
+  );
+};
+```
+
+## API (draft)
+
+| API                                   | Meaning                                                                 | Lowered to                                                       |
+| ------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `reactive.new(x)`                     | Creates a reactive value                                                | `useState(x)`                                                    |
+| `r.update(f)`                         | Updates with a pure function                                            | `setR(f)`                                                        |
+| `r.derive(f)`                         | Derived value                                                           | `f(r)` (memoization is left to the React Compiler)               |
+| `reactive.handler(e => ... $(r) ...)` | Reads the current value inside an event handler                         | The function itself. `$(r)` is replaced by `r`                   |
+| `r.focus(key)`                        | Focuses on a part with a lens. `update` is written back to the original | The value `r[key]` and a setter with the lens applied            |
+| `r.each(keyFn, render)`               | Renders a list by splitting it into one `Reactive` per item             | `r.map(x => <Fragment key={keyFn(x)}>...)` and a setter per item |
+| `r.when(guard, { narrowed, rest? })`  | Narrows with a type guard                                               | `guard(r) ? narrowed(r) : rest(r)` and a setter with the guard   |
+| `r.match(key, cases)`                 | Narrows a discriminated union                                           | A chain of `r[key] === case ? ... : ...`                         |
+| `reactive.derive(() => ...)` / `$(r)` | Creates a derived value                                                 | `$(r)` inside the block is replaced by the value                 |
+| `reactive.effect(() => ... $(r) ...)` | Runs a side effect when what it reads changes                           | `useEffect(block, [r, ...])`. The dependencies are filled in     |
+| `{r}` inside JSX                      | Embeds the value                                                        | `{r}`                                                            |
+
+### reactive.derive (formerly: do notation)
+
+```ts
+declare function $<T>(r: Reactive<T>): T; // at the type level it "pretends" to return T
+
+const total = reactive.derive(() => $(price) * $(qty));
+```
+
+- The preprocessor checks that `$` is only used inside `reactive.derive`
+- React recomputes on every render, so lowering only has to replace `$(x)` by the value
+
+## Constraints and things to check
+
+- **Rules of hooks**: `reactive.new` cannot be called inside a condition, a loop, or a nested function (it expands to `useState`). The preprocessor reports an error
+- Using `$` outside `reactive.derive` is an error
+- Misuse of a `Reactive<T>` as a plain value (arithmetic, embedding it directly in a template literal, and so on) is rejected by the types
+  - `Reactive<T>` is an opaque branded type in TypeScript
+- Referential stability of the setters generated by `focus` / `each` (the output must be in a form the React Compiler can optimize)
+- Lowering of a `Reactive<T>` passed between components as a prop (expanded to a pair of value and setter)
+
+## Roadmap
+
+### Step 0: Environment
+
+- nix flake (Node / pnpm)
+- Vitest
+- The skeleton of the Babel plugin, wrapped as a Vite plugin
+
+### Step 1: Type definitions
+
+- Types of `Reactive<T>`, `reactive.new`, `update`, `map`, `map2`, `with` (branded type). `map` was later renamed to `derive`; `map2` and `with` were removed
+- Type tests confirm that misuses are rejected at the type level
+
+### Step 2: Minimal lowering
+
+- `reactive.new` → `useState`
+- `update` → a setter call
+- `map` / `with` → computing the value (`map` is now `derive`)
+- Embedding in JSX
+- The Counter works
+
+### Step 3: Lenses and lists
+
+- `focus` (object keys)
+- `each` (lists with a key function)
+- Passing a `Reactive<T>` as a prop
+- The Todo app works
+
+### Step 4: reactive.derive (formerly: do notation)
+
+- Lowering and checks of `reactive.derive` / `$`
+
+### Step 5: Combining with the React Compiler
+
+- Confirm that the transformed code is optimized correctly by the React Compiler
+- Snapshot tests that put the code before and after the transform side by side
+
+## Open questions
+
+- Lowering when the value is received by array destructuring (`const [a, b] = useX()`)
+- Transform speed on large projects
+
+### Decisions
+
+Implemented as provisional decisions.
+
+- API names are all lowercase (`reactive.new` / `reactive.of` / `reactive.from` / `reactive.derive`)
+- JSX is extended. A reactive value can be written as `{r}` both as a child and as an attribute. The types pass through `jsxImportSource`
+- `set(value)` was added. `update` and `set` can be passed as functions without calling them
+- `reactive.do` was renamed to `reactive.derive`. This avoids a name that comes from Haskell and matches the type `Derived<T>`
+- `$(r)` also reads a value inside JSX `{...}`. `{...}` is treated as an implicit `reactive.derive`
+- Jotai atoms are read with `useReactiveAtom` / `useReactiveAtomValue` from `react-preprocessor/jotai`. This is the only part of the library with runtime code
+- `with` was replaced by `reactive.handler`. Inside the function, `$(r)` reads a value. This is the same way of reading as in `reactive.derive`
+- The key of `focus` is a string literal. Composition is written as a chain, `focus("a").focus("b")`
+- An `update` on an item of `each` is written back by key
+- Narrowing is `when(guard, { narrowed, rest? })` and `match(key, cases)`. Both take how to tell the cases apart and an object literal of branches; `when` took its branches as positional arguments until they were named, because three arrow functions in a row did not say which was the guard and which the branches. The branches are not called `then` / `else`: an object with `then` is a thenable, which lint rules (`unicorn/no-thenable`) report. `guard` is a type guard, and an inferred type predicate (`(u) => u !== null`) is enough, so there is no method specific to `null`. `narrowed` receives a writable value and `rest` a read-only one. An `update` on the narrowed value checks the guard again when it is applied, `prev => guard(prev) ? f(prev) : prev`, and is dropped if the guard no longer holds. `match` is the same machinery with the guard `prev.key === "case"`; every case is compared, and the value is `undefined` when none matches. Inside a handler both can be written as a statement, lowered to `if` / `else if`: the branch is chosen with the value of the render, and the updates in it are still checked when applied
+- The runtime representation of a `Reactive<T>` that crosses a function boundary (props, arguments and return values of custom hooks, Context) is `{ value, update }`. Which values are reactive is asked from the type checker
+- Values from `useReducer` / external stores are brought in with `reactive.from` / `reactive.of`
+- The source maps generated by Babel are used as they are (tests confirm that lines match)
+- In the dev server, the page reloads when a type-only file changes
+- Side effects are written with `reactive.effect`, which becomes `useEffect`. The dependency array is never written by hand:
+  it lists the values read with `$(r)` and the plain values of the component or custom hook that the block uses.
+  Module-level variables, globals, and the generated setters are left out. With no dependency it is `[]`.
+  It follows the same position rule as `reactive.new`. There is no "read without depending" escape hatch and no `useLayoutEffect` variant yet
+- A `react-preprocessor` command prints the output for one file (`print`) and rewrites a project to plain React (`eject`). `eject` only calls the Babel plugin, then points the type imports at generated plain types `{ value, update }` so that the result type-checks. Formatting and the build config are left to the user
+- The output keeps the types the sugar gave, so that it type-checks against the plain `{ value, update }` types after `eject`. A `Reactive<T>` / `Derived<T>` annotation on a received value moves to the destructuring, `({ value: x, update: setX }: Reactive<T>)`. The updater of `reactive.from` was typed by the call, so the variable that keeps it is annotated, `setN: (f: (old: typeof n) => typeof n) => void`, unless the updater has a type of its own (a reference, or a function with annotated parameters). The variable is annotated instead of the parameter so that anything in the expression is typed as it was (`useCallback((f) => ..., [])`), and `typeof n` names the variable the value is bound to, so the value can be any expression. A `T` written in the source (`Reactive<T>` on the binding, `reactive.from<T>`) is used instead of `typeof n`. Without one, a value with a literal type gives an updater that only accepts that literal, where the call inferred the widened type. A literal, or a `const` that holds one, given to `reactive.from` is therefore a build error unless the `T` is written: the value never changes, so it is a mistake in any case. A constant the syntax cannot see (imported, an enum member) still gets through; the README tells the user to write the `T`. Catching those needs the type service to say that a type is a single literal. JavaScript files get no type
+- Names inside types are never references to reactive values. The lowering skips types altogether, so `typeof n` is left as written and means the type of the plain value after lowering
+- Deriving from one value is `r.derive(f)`, not `r.map(f)`: linters took `map` for `Array.prototype.map` and asked for a `key` (`react/jsx-key`). `map2(a, b, f)` is gone; `reactive.derive(() => f($(a), $(b)))` is the one way to derive from several values
+- `react-preprocessor/eslint` (one rule, `valid-sugar`) runs the Babel plugin on the file and reports the error it throws, at the node the error points at. The checks are not written twice, and the rule cannot disagree with the build. It reads the text, not the linter's tree, so it works with whichever parser ESLint is given for TypeScript (typescript-eslint does not support TypeScript 7 yet) and also runs as a JS plugin of oxlint, which reads TypeScript itself. The types are asked only while the text equals the file on disk (an unsaved editor buffer is skipped rather than checked without types, which reports valid code). A linted file whose mtime changed since it was last linted invalidates the service; a file linted for the first time does when it is newer than the service's last read (with a 20 ms margin for the coarse file clock of Linux), since it may have been read as a dependency before. Errors that are not about the code (the type checker cannot be asked) carry their `cause` and are reported only for files that import the sugar; a type checker that cannot be started (oxlint with many threads on Linux: `spawn ENOMEM`) is reported once
+- The type service's `invalidate` closes the files it opened before the snapshot is rebuilt. With TypeScript 7.0, `invalidateAll` alone kept answering from the old files
+
+## Prior art and references
+
+- Svelte 5 runes: giving meaning to valid TS syntax through a compiler
+- React Compiler: where the transformed code is optimized
+- Jotai's `focusAtom` / `splitAtom`, Laminar's `zoom`: focusing with lenses
+- GHC's `ApplicativeDo`: an idea that could later be used for dependency analysis of do blocks
+- Solid's `<For>`: list diffing by reference and key
+
+## Progress
+
+| Step                                 | Status | Notes                                                                                                                                                                |
+| ------------------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0: Environment                       | Done   | nix flake (Node / pnpm), oxlint, oxfmt, tsdown, Vitest, GitHub Actions                                                                                               |
+| 1: Type definitions                  | Done   | Split into `Reactive<T>` (writable) and `Derived<T>` (read-only)                                                                                                     |
+| 2: Minimal lowering                  | Done   | `reactive.new` / `update` / `map` (now `derive`) / `map2` / `with` (both removed since) / embedding in JSX                                                           |
+| 3: Lenses and lists                  | Done   | `focus` (string literal keys), `each` (written back by key), passing props (`{ value, update }`). Props are identified by asking the type checker (TypeScript 7 API) |
+| 4: reactive.derive                   | Done   | `reactive.derive` / `$`                                                                                                                                              |
+| 5: Combining with the React Compiler | Done   | Works both in a single Babel run and as a sequence of Vite plugins                                                                                                   |

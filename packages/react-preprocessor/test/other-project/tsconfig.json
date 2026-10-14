@@ -1,0 +1,13 @@
+{
+  // A tsconfig project separate from test/typed. Creates a situation with two type checkers
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "react-preprocessor": ["../../src/index.ts"],
+      "react-preprocessor/jsx-runtime": ["../../src/jsx-runtime.ts"],
+      "react-preprocessor/jsx-dev-runtime": ["../../src/jsx-dev-runtime.ts"]
+    }
+  },
+  "include": ["."],
+  "exclude": []
+}

@@ -1,0 +1,24 @@
+{
+  "name": "react-preprocessor-repo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -F react-preprocessor build",
+    "dev": "pnpm build && pnpm -F @examples/counter dev",
+    "dev:website": "pnpm build && pnpm -F website dev",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm build && pnpm -r typecheck",
+    "fmt": "oxfmt && nix fmt",
+    "fmt:check": "oxfmt --check",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "check": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
+    "typescript": "^7.0.2"
+  }
+}
