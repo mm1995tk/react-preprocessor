@@ -1231,16 +1231,17 @@ describe("several tsconfig projects", () => {
   });
 });
 
-describe("receiving a reactive value", () => {
-  const hook = (binding: string): string => `
-    import { reactive, type Reactive } from "react-preprocessor";
-    declare const useOne: () => Reactive<number>;
-    export const C = () => {
-      ${binding}
-      return <button onClick={() => on.update((n) => n + 1)}>{on}</button>;
-    };
-  `;
+/** A component that receives `on` from a hook, bound as written */
+const hook = (binding: string): string => `
+  import { reactive, type Reactive } from "react-preprocessor";
+  declare const useOne: () => Reactive<number>;
+  export const C = () => {
+    ${binding}
+    return <button onClick={() => on.update((n) => n + 1)}>{on}</button>;
+  };
+`;
 
+describe("receiving a reactive value", () => {
   test("under a type assertion, the value is unpacked", () => {
     for (const binding of [
       "const on: Reactive<number> = useOne()!;",

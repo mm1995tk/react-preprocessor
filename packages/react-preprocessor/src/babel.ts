@@ -363,6 +363,17 @@ const received = (program: NodePath<t.Program>, ctx: Context): (() => void) | nu
   return () => binds.forEach((bind) => bind());
 };
 
+/** Reports a reactive value that would stay `{ value, update }`. Nothing to report for a plain value */
+const reportBoxed = (path: NodePath, name: string, kind: Kind | null): void => {
+  if (!kind) return;
+  if (kind === "optional") fail(path, `The reactive value \`${name}\` cannot be optional.`);
+  fail(
+    path,
+    `The reactive value \`${name}\` must be bound with \`const\` to a plain name, directly to what gives it: ` +
+      `\`const ${name} = ...\`, \`const { ${name} } = ...\`, or \`const [${name}] = ...\`.`,
+  );
+};
+
 /**
  * Reports a reactive value bound in a form that is not unpacked. It would stay `{ value, update }`
  * at runtime, although its type says `Reactive<T>`: `let x = useX()`, `const x = cond ? useA() : useB()`,
@@ -381,20 +392,11 @@ const checkReceived = (program: NodePath<t.Program>, ctx: Context): void => {
       }
     },
   });
-  const report = (path: NodePath, name: string, kind: Kind | null): void => {
-    if (!kind) return;
-    if (kind === "optional") fail(path, `The reactive value \`${name}\` cannot be optional.`);
-    fail(
-      path,
-      `The reactive value \`${name}\` must be bound with \`const\` to a plain name, directly to what gives it: ` +
-        `\`const ${name} = ...\`, \`const { ${name} } = ...\`, or \`const [${name}] = ...\`.`,
-    );
-  };
   if (!ctx.types) {
     for (const { path, local } of suspects) {
       const annotation = local.typeAnnotation;
       if (t.isTSTypeAnnotation(annotation)) {
-        report(path, local.name, kindOfType(ctx, annotation.typeAnnotation));
+        reportBoxed(path, local.name, kindOfType(ctx, annotation.typeAnnotation));
       }
     }
     return;
@@ -405,7 +407,7 @@ const checkReceived = (program: NodePath<t.Program>, ctx: Context): void => {
     suspects.map(({ local }): Query => ({ position: local.start!, of: "value" })),
   );
   for (const [index, { path, local }] of suspects.entries()) {
-    report(path, local.name, answers[index]!.kind);
+    reportBoxed(path, local.name, answers[index]!.kind);
   }
 };
 
