@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createContext, useContext, useReducer } from "react";
 import type { Reactive } from "react-preprocessor";
-import { useCounter, useDoubled, useToggle } from "./hooks.ts";
+import { useCounter, useDoubled, usePair, useToggle } from "./hooks.ts";
 
 // Passing values to and from custom hooks
 export const Counter = () => {
@@ -29,6 +29,24 @@ export const Counter = () => {
       </output>
       <button onClick={inc}>inc</button>
       <button onClick={() => setOn(value => !value)}>toggle</button>
+    </>;
+};
+
+// Received by array destructuring, and under a type assertion
+export const Paired = () => {
+  const [{
+    value: count
+  }, inc] = usePair(1);
+  const {
+    value: on,
+    update: setOn2
+  } = useToggle()!;
+  return <>
+      <output>
+        {count} {on ? "on" : "off"}
+      </output>
+      <button onClick={inc}>inc</button>
+      <button onClick={() => setOn2(value => !value)}>toggle</button>
     </>;
 };
 

@@ -83,9 +83,9 @@ type Context = {
   usedSetters: Set<string>;
   /**
    * The setters that hold the updater of `reactive.from`, with the variable and the position of the declaration.
-   * Unlike the others they are not stable across renders
+   * Unlike the others they are not stable across renders. `updater` is the expression held, once it is in place
    */
-  heldUpdaters: Map<string, { name: string; start: number }>;
+  heldUpdaters: Map<string, { name: string; start: number; updater?: NodePath<t.Expression> }>;
 };
 
 const METHODS = new Set(["derive", "update", "set", "focus", "each", "when", "match"]);
@@ -141,8 +141,12 @@ export default function reactPreprocessor(_api: PluginAPI, options: Options = {}
           ctx.types = { service, filename: state.filename!, code: state.file.code };
         }
         const bind = received(program, ctx);
-        // Even without importing the sugar, a file that receives reactive values needs the replacement
-        if (!ctx.found && !bind) return;
+        // Even without importing the sugar, a file that receives reactive values needs the replacement.
+        // One that binds them in a form that is not unpacked is reported, the sugar imported or not
+        if (!ctx.found && !bind) {
+          checkReceived(program, ctx);
+          return;
+        }
         // Tells the caller (the CLI) that this file goes through the replacement
         (state.file.metadata as { reactPreprocessor?: unknown }).reactPreprocessor = {
           lowered: true,
@@ -153,6 +157,7 @@ export default function reactPreprocessor(_api: PluginAPI, options: Options = {}
         });
         bind?.();
         classifyBindings(program, ctx);
+        checkReceived(program, ctx);
         program.traverse(lowering(ctx));
         for (const [setter, drop] of ctx.states) {
           if (!ctx.usedSetters.has(setter)) drop();
@@ -209,12 +214,30 @@ const createContext = (program: NodePath<t.Program>, importSource: string): Cont
   return ctx;
 };
 
+/** The expression under the type-only wrappers `x as T`, `x!`, `x satisfies T`, `<T>x`, and `(x)` */
+const unwrapped = (node: t.Node | null | undefined): t.Node | null | undefined => {
+  while (
+    t.isTSAsExpression(node) ||
+    t.isTSNonNullExpression(node) ||
+    t.isTSSatisfiesExpression(node) ||
+    t.isTSTypeAssertion(node) ||
+    t.isParenthesizedExpression(node)
+  ) {
+    node = node.expression;
+  }
+  return node;
+};
+
+/** A destructuring whose variables may receive reactive values */
+type Pattern = t.ObjectPattern | t.ArrayPattern;
+
 /**
  * Finds the reactive values received from outside a function boundary.
  *
  * - props of a component
  * - parameters of a custom hook
- * - `const x = useX()` / `const { a, b } = useX()`, which bind things such as a function's return value
+ * - `const x = useX()` / `const { a, b } = useX()` / `const [a, b] = useX()`, which bind things such as
+ *   a function's return value
  *
  * When found, returns the action that binds them. It creates new variable names, so call it
  * after the names used in the file have all been collected.
@@ -230,17 +253,18 @@ const received = (program: NodePath<t.Program>, ctx: Context): (() => void) | nu
   type Props = { path: NodePath; param: t.Identifier | t.ObjectPattern };
   const locals: Local[] = [];
   const components: Props[] = [];
-  const patterns: { path: NodePath; pattern: t.ObjectPattern }[] = [];
+  const patterns: { path: NodePath; pattern: Pattern }[] = [];
 
   /** Checks the variables of a destructuring one by one. With `bind`, the destructuring is rewritten later */
-  const addPattern = (path: NodePath, pattern: t.ObjectPattern, bind: boolean): void => {
-    for (const property of pattern.properties) {
-      if (!t.isObjectProperty(property)) continue;
-      const { value } = property;
+  const addPattern = (path: NodePath, pattern: Pattern, bind: boolean): void => {
+    const items = t.isObjectPattern(pattern) ? pattern.properties : pattern.elements;
+    for (const item of items) {
+      // A property of an object, or an item of an array. What is received is keyed by this node
+      const value = t.isObjectProperty(item) ? item.value : item;
       const local = t.isAssignmentPattern(value) ? value.left : value;
-      if (!t.isIdentifier(local)) continue;
-      const name = propertyKey(property.key, property.computed) ?? local.name;
-      const accept = (kind: PropKind): void => void ctx.receivable.set(property, kind);
+      if (!item || !t.isIdentifier(local) || t.isRestElement(item)) continue;
+      const name = (t.isObjectProperty(item) && propertyKey(item.key, item.computed)) || local.name;
+      const accept = (kind: PropKind): void => void ctx.receivable.set(item, kind);
       locals.push({ path, local, name, annotation: null, accept });
     }
     if (bind) patterns.push({ path, pattern });
@@ -254,7 +278,7 @@ const received = (program: NodePath<t.Program>, ctx: Context): (() => void) | nu
       const { params } = path.node;
       if (isHookName(name)) {
         for (const [index, param] of params.entries()) {
-          if (t.isObjectPattern(param)) addPattern(path, param, true);
+          if (t.isObjectPattern(param) || t.isArrayPattern(param)) addPattern(path, param, true);
           if (!t.isIdentifier(param)) continue;
           const accept = (kind: PropKind): void => void (params[index] = receive(ctx, param, kind));
           locals.push({
@@ -271,13 +295,14 @@ const received = (program: NodePath<t.Program>, ctx: Context): (() => void) | nu
       }
     },
     VariableDeclarator(path) {
-      const { id, init } = path.node;
+      const { id } = path.node;
       if (!path.parentPath.isVariableDeclaration({ kind: "const" })) return;
-      // Received as a function's return value or as a property of an object
+      // Received as a function's return value or as a property of an object, possibly under `as` or `!`
+      const init = unwrapped(path.node.init);
       if (!t.isCallExpression(init) && !t.isMemberExpression(init) && !t.isAwaitExpression(init)) {
         return;
       }
-      if (t.isObjectPattern(id)) addPattern(path, id, false);
+      if (t.isObjectPattern(id) || t.isArrayPattern(id)) addPattern(path, id, false);
       if (!t.isIdentifier(id)) return;
       const accept = (kind: PropKind): void => void ctx.receivable.set(id, kind);
       locals.push({ path, local: id, name: id.name, annotation: id.typeAnnotation, accept });
@@ -333,9 +358,55 @@ const received = (program: NodePath<t.Program>, ctx: Context): (() => void) | nu
   if (binds.length === 0) return null;
 
   for (const { path, pattern } of patterns) {
-    binds.push(() => bindProps(ctx, path, pattern, (property) => ctx.receivable.get(property)));
+    binds.push(() => bindProps(ctx, path, pattern, (item) => ctx.receivable.get(item)));
   }
   return () => binds.forEach((bind) => bind());
+};
+
+/**
+ * Reports a reactive value bound in a form that is not unpacked. It would stay `{ value, update }`
+ * at runtime, although its type says `Reactive<T>`: `let x = useX()`, `const x = cond ? useA() : useB()`,
+ * a nested destructuring. Run after the bindings are classified: what is classified is unpacked.
+ */
+const checkReceived = (program: NodePath<t.Program>, ctx: Context): void => {
+  const suspects: { path: NodePath; local: t.Identifier }[] = [];
+  program.traverse({
+    VariableDeclarator(path) {
+      // `declare const x: Reactive<T>` declares no value
+      if (path.parentPath.isVariableDeclaration({ declare: true })) return;
+      for (const local of Object.values(t.getBindingIdentifiers(path.node.id))) {
+        // A generated name has no position, and nothing to ask about
+        if (ctx.bindings.has(local) || local.start == null) continue;
+        suspects.push({ path, local });
+      }
+    },
+  });
+  const report = (path: NodePath, name: string, kind: Kind | null): void => {
+    if (!kind) return;
+    if (kind === "optional") fail(path, `The reactive value \`${name}\` cannot be optional.`);
+    fail(
+      path,
+      `The reactive value \`${name}\` must be bound with \`const\` to a plain name, directly to what gives it: ` +
+        `\`const ${name} = ...\`, \`const { ${name} } = ...\`, or \`const [${name}] = ...\`.`,
+    );
+  };
+  if (!ctx.types) {
+    for (const { path, local } of suspects) {
+      const annotation = local.typeAnnotation;
+      if (t.isTSTypeAnnotation(annotation)) {
+        report(path, local.name, kindOfType(ctx, annotation.typeAnnotation));
+      }
+    }
+    return;
+  }
+  const answers = ask(
+    ctx,
+    program,
+    suspects.map(({ local }): Query => ({ position: local.start!, of: "value" })),
+  );
+  for (const [index, { path, local }] of suspects.entries()) {
+    report(path, local.name, answers[index]!.kind);
+  }
 };
 
 /**
@@ -588,28 +659,41 @@ const receive = (ctx: Context, local: t.Identifier, kind: PropKind): t.ObjectPat
   return pattern;
 };
 
-/** Rewrites the destructuring `{ value }` to `{ value: { value, update: setValue } }` */
+/**
+ * Rewrites the destructuring `{ value }` to `{ value: { value, update: setValue } }`,
+ * and `[value]` to `[{ value, update: setValue }]`
+ */
 const bindProps = (
   ctx: Context,
   path: NodePath,
-  pattern: t.ObjectPattern,
-  kindOf: (property: t.ObjectProperty, key: string) => PropKind | undefined,
+  pattern: Pattern,
+  kindOf: (item: t.ObjectProperty | t.PatternLike, key: string) => PropKind | undefined,
 ): void => {
-  for (const property of pattern.properties) {
-    if (!t.isObjectProperty(property)) continue;
-    const key = propertyKey(property.key, property.computed);
-    const kind = key === null ? undefined : kindOf(property, key);
+  const items = t.isObjectPattern(pattern) ? pattern.properties : pattern.elements;
+  for (const [index, item] of items.entries()) {
+    if (!item || t.isRestElement(item)) continue;
+    const value = t.isObjectProperty(item) ? item.value : item;
+    const local = t.isAssignmentPattern(value) ? value.left : value;
+    const key = t.isObjectProperty(item)
+      ? propertyKey(item.key, item.computed)
+      : t.isIdentifier(local)
+        ? local.name
+        : null;
+    const kind = key === null ? undefined : kindOf(item, key);
     if (!kind) continue;
-    const local = property.value;
-    if (!t.isIdentifier(local)) {
+    if (!t.isIdentifier(value)) {
       fail(
         path,
-        `The reactive prop \`${key}\` must be bound to a plain name, without a default value.`,
+        `The reactive value \`${key}\` must be bound to a plain name, without a default value.`,
       );
       continue;
     }
-    property.value = receive(ctx, local, kind);
-    property.shorthand = false;
+    if (t.isObjectProperty(item)) {
+      item.value = receive(ctx, value, kind);
+      item.shorthand = false;
+    } else {
+      (items as (t.PatternLike | null)[])[index] = receive(ctx, value, kind);
+    }
   }
 };
 
@@ -958,6 +1042,8 @@ const classifyBindings = (program: NodePath<t.Program>, ctx: Context): void => {
   };
 
   const infoOf = (node: t.Node, scope: NodePath["scope"], name: string): Info | null => {
+    // `useX()!`, `useX() as Reactive<T>`: the type is said again, the value is the same
+    node = unwrapped(node)!;
     if (t.isMemberExpression(node)) return propInfo(ctx, node, scope);
     if (t.isIdentifier(node)) {
       const binding = scope.getBinding(node.name);
@@ -1008,9 +1094,9 @@ const classifyBindings = (program: NodePath<t.Program>, ctx: Context): void => {
         if (kinds) bindProps(ctx, path, id, (_, key) => kinds.get(key));
         return;
       }
-      // `const { count } = useCounter()`
-      if (t.isObjectPattern(id)) {
-        bindProps(ctx, path, id, (property) => ctx.receivable.get(property));
+      // `const { count } = useCounter()`, `const [count] = useCounter()`
+      if (t.isObjectPattern(id) || t.isArrayPattern(id)) {
+        bindProps(ctx, path, id, (item) => ctx.receivable.get(item));
         return;
       }
       classify(path);
@@ -1380,11 +1466,19 @@ const lowering = (ctx: Context): Parameters<NodePath["traverse"]>[0] => {
           }
           const setter = t.variableDeclarator(setterId, info.from);
           const declarations = (path.parent as t.VariableDeclaration).declarations;
-          declarations.splice(declarations.indexOf(path.node) + 1, 0, setter);
+          const index = declarations.indexOf(path.node) + 1;
+          declarations.splice(index, 0, setter);
           ctx.states.set(
             info.setter!,
             () => void declarations.splice(declarations.indexOf(setter), 1),
           );
+          // An effect below depends on what the updater reads. It is found through its path
+          const held = ctx.heldUpdaters.get(info.setter!);
+          if (held) {
+            held.updater = path.parentPath.get(
+              `declarations.${index}.init`,
+            ) as NodePath<t.Expression>;
+          }
           return;
         }
         if (info.state) {
@@ -1617,7 +1711,8 @@ const dependencyKey = (node: t.Node): string | null => {
  * - a plain value declared in the component or the custom hook. The effect must not capture a stale one
  *
  * Module-level variables, globals, and variables of the block itself are not dependencies.
- * The setters the preprocessor generates are stable and are left out, except the updater of `reactive.from`.
+ * The setters the preprocessor generates are stable and are left out. The updater of `reactive.from` is
+ * written in the component, so it is a new function on every render: what it reads is a dependency instead.
  */
 const effectDependencies = (ctx: Context, block: NodePath<EffectBlock>): t.Expression[] => {
   const dependencies = new Map<string, t.Expression>();
@@ -1632,12 +1727,18 @@ const effectDependencies = (ctx: Context, block: NodePath<EffectBlock>): t.Expre
     dependencies.set(key, dependency);
   };
 
-  /** Whether the name is declared in the component or the custom hook, outside the block */
+  /** The function being read for dependencies: the block, or the updater of `reactive.from` it calls */
+  let root: NodePath = block;
+
+  /** Whether the name is declared in the component or the custom hook, outside `root` */
   const isLocal = (path: NodePath, name: string): boolean => {
     const declaredIn = path.scope.getBinding(name)?.scope.path;
     if (!declaredIn || declaredIn.isProgram()) return false;
-    return declaredIn.find((ancestor) => ancestor.node === block.node) === null;
+    return declaredIn.find((ancestor) => ancestor.node === root.node) === null;
   };
+
+  /** The held updaters whose reads were collected. Each is read once */
+  const collected = new Set<string>();
 
   /**
    * The dependency array is evaluated during render, at the place of the effect. A `const`, `let` or
@@ -1669,6 +1770,20 @@ const effectDependencies = (ctx: Context, block: NodePath<EffectBlock>): t.Expre
     if (held === undefined && !isLocal(path, name)) return;
     if (held === undefined) checkBinding(path, name);
     else checkDeclared(path, held.name, held.start);
+    if (held !== undefined) {
+      // The updater is a function written in place: what it reads of the component is what can change.
+      // One received as a value, such as `setState` or `props.onChange`, is the dependency itself
+      if (collected.has(name)) return;
+      collected.add(name);
+      if (held.updater) {
+        const outer = root;
+        root = held.updater;
+        if (held.updater.isFunction()) held.updater.traverse(visitors);
+        else visit(held.updater);
+        root = outer;
+        return;
+      }
+    }
     // `props` is a new object on every render. Depend on the prop that is read
     const member = path.parent;
     const ofProps =
@@ -1680,29 +1795,42 @@ const effectDependencies = (ctx: Context, block: NodePath<EffectBlock>): t.Expre
     add(ofProps ? (member as t.MemberExpression) : t.identifier(name));
   };
 
-  block.traverse({
+  const member = (path: NodePath<t.MemberExpression>): boolean => {
+    const { node } = path;
+    // `$(state.focus("page"))` depends on `state.page`, not on the whole `state`
+    const read = ctx.reads.has(node) && dependencyKey(node) !== null;
+    // A reactive prop is `{ value, update }`. The value is a dependency. `update` is treated as stable
+    const prop = t.isMemberExpression(node.object) && propInfo(ctx, node.object, path.scope);
+    if (!read && !prop) return false;
+    const base = dependencyKey(node)?.split(".")[0];
+    const value = read || propertyKey(node.property, node.computed) === "value";
+    if (value && base !== undefined && isLocal(path, base)) {
+      checkBinding(path, base);
+      add(node);
+    }
+    return true;
+  };
+
+  const visitors = {
     // Names in types are not values
     "TSType|TSTypeAnnotation|TSTypeParameterInstantiation"(path: NodePath) {
       path.skip();
     },
     Identifier: reference,
     JSXIdentifier: reference,
-    MemberExpression(path) {
-      const { node } = path;
-      // `$(state.focus("page"))` depends on `state.page`, not on the whole `state`
-      const read = ctx.reads.has(node) && dependencyKey(node) !== null;
-      // A reactive prop is `{ value, update }`. The value is a dependency. `update` is treated as stable
-      const prop = t.isMemberExpression(node.object) && propInfo(ctx, node.object, path.scope);
-      if (!read && !prop) return;
-      const root = dependencyKey(node)?.split(".")[0];
-      const value = read || propertyKey(node.property, node.computed) === "value";
-      if (value && root !== undefined && isLocal(path, root)) {
-        checkBinding(path, root);
-        add(node);
-      }
-      path.skip();
+    MemberExpression(path: NodePath<t.MemberExpression>) {
+      if (member(path)) path.skip();
     },
-  });
+  };
+
+  /** Reads one expression, which `traverse` would not visit itself */
+  const visit = (path: NodePath): void => {
+    if (path.isIdentifier() || path.isJSXIdentifier()) reference(path);
+    else if (path.isMemberExpression() && member(path)) return;
+    else path.traverse(visitors);
+  };
+
+  block.traverse(visitors);
   return [...dependencies.values()];
 };
 

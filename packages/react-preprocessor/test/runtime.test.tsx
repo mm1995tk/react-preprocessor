@@ -3,7 +3,7 @@ import { startTransition, useEffect } from "react";
 import { afterEach, expect, test } from "vitest";
 import { $, reactive, type Derived, type Reactive } from "react-preprocessor";
 import { AtomCounter } from "./typed/Atoms.tsx";
-import { Chained, Counter as HookCounter, Reduced, Themed } from "./typed/Hooks.tsx";
+import { Chained, Counter as HookCounter, Paired, Reduced, Themed } from "./typed/Hooks.tsx";
 import { Item } from "./typed/Item.tsx";
 import { Names, Switch } from "./typed/Narrowed.tsx";
 
@@ -253,6 +253,14 @@ test("reactive values cross custom hooks", () => {
   fireEvent.click(screen.getByText("inc"));
   fireEvent.click(screen.getByText("toggle"));
   expect(screen.getByRole("status").textContent).toBe("2 4 8 on");
+});
+
+test("reactive values received by array destructuring and under a type assertion", () => {
+  render(<Paired />);
+  expect(screen.getByRole("status").textContent).toBe("1 off");
+  fireEvent.click(screen.getByText("inc"));
+  fireEvent.click(screen.getByText("toggle"));
+  expect(screen.getByRole("status").textContent).toBe("2 on");
 });
 
 test("a reactive value is shared through Context", () => {

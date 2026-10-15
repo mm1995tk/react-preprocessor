@@ -69,7 +69,7 @@ export function Search(props) {
       const id = setInterval(() => setClock(_temp3), 1000);
       return () => clearInterval(id);
     };
-    t4 = [setClock];
+    t4 = [tick];
     $[3] = t3;
     $[4] = t4;
   } else {
