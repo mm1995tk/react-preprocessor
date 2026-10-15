@@ -33,7 +33,7 @@ export function Search(props: {
   useEffect(() => {
     const id = setInterval(() => setClock(n => n + 1), 1000);
     return () => clearInterval(id);
-  }, [setClock]);
+  }, [tick]);
 
   // Values read with `$`, a lens, and a prop. The setters are not dependencies
   useEffect(() => {

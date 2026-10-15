@@ -269,6 +269,14 @@ const useCounter = (initial: number) => {
 
 const { count, double } = useCounter(0);
 
+// custom hooks, with the values in an array
+const usePair = () => {
+  const count = reactive.new(0);
+  return [count, () => count.update((n) => n + 1)] as const;
+};
+
+const [count, inc] = usePair();
+
 // Context
 const Theme = createContext<Reactive<string>>(null!);
 
@@ -278,6 +286,9 @@ const theme = useContext(Theme);
 
 At a boundary the value is represented at runtime as an object `{ value, update }`
 (`update` is omitted for `Derived<T>`). The preprocessor builds it on the way out and unpacks it on the way in.
+It unpacks a value bound with `const` to a plain name, directly to what gives it: `const x = useX()`,
+`const { x } = useX()`, `const [x] = useX()`, also under `!` or `as`. Any other binding of a reactive
+value (`let`, a default value, a nested destructuring) is a build error, so that the object never stays in place.
 
 Babel cannot resolve types, so the preprocessor asks the TypeScript type checker which props,
 parameters, and results are reactive. The type can live anywhere, including another file.
@@ -324,7 +335,8 @@ useEffect(() => {
 - `$(r)` reads a reactive value, as in `reactive.derive`. Each value read is a dependency.
 - Plain values of the component or custom hook that the block uses (props, parameters, local
   variables and functions) are dependencies too, so the effect never sees a stale value.
-  Module-level variables, globals, and the generated setters are left out.
+  Module-level variables, globals, and the generated setters are left out. The updater of `reactive.from`
+  is written in the component, so what it reads is a dependency, not the function itself.
 - With no dependency the array is `[]`: the effect runs once on mount.
 - The block may return a cleanup function, as in `useEffect`. It cannot be `async`.
 - `update` / `set` are allowed inside the block.
@@ -344,6 +356,7 @@ Misuse that the type checker cannot see is reported as a build error with a code
 - `match` with a case named `true` or `false`: the cases are compared as strings. Use `when` for a boolean
 - `when` / `match` as a statement during render (only allowed inside functions such as event handlers and effects)
 - `reactive.from` given a literal, or a `const` of the same file that leads to one (`0`, `0 as const`, `const start = 0`): the value never changes. In TypeScript, writing the type, `reactive.from<number>(0, ...)` or `Reactive<number>` on the variable, says it is meant
+- a reactive value received from a hook or a function bound in a form that is not unpacked: `let x = useX()`, a default value, a nested destructuring (see [Crossing function boundaries](#crossing-function-boundaries))
 
 ## Setup
 

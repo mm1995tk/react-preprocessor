@@ -32,3 +32,12 @@ export function useToggle(): Reactive<boolean> {
     update: setOn
   };
 }
+
+// Returns reactive values inside an array
+export const usePair = (initial: number): [Reactive<number>, () => void] => {
+  const [count, setCount2] = useState(() => initial);
+  return [{
+    value: count,
+    update: setCount2
+  }, () => setCount2(n => n + 1)];
+};

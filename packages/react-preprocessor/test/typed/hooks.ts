@@ -15,3 +15,9 @@ export function useToggle(): Reactive<boolean> {
   const on = reactive.new(false);
   return on;
 }
+
+// Returns reactive values inside an array
+export const usePair = (initial: number): [Reactive<number>, () => void] => {
+  const count = reactive.new(initial);
+  return [count, () => count.update((n) => n + 1)];
+};

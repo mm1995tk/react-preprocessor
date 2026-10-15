@@ -249,7 +249,7 @@ describe("reactive.effect", () => {
     expect(dependencies(output)).toBe("[cnt, double]");
   });
 
-  test("the updater of reactive.from is a dependency, the generated setters are not", () => {
+  test("what the updater of reactive.from reads is a dependency, the generated setters are not", () => {
     const code = `
       import { useReducer } from "react";
       import { reactive } from "react-preprocessor";
@@ -264,7 +264,26 @@ describe("reactive.effect", () => {
         return null;
       };
     `;
-    expect(dependencies(transform(code))).toBe("[setN]");
+    // The updater is a new function on every render. Depending on it would run the effect on every render
+    expect(dependencies(transform(code))).toBe("[dispatch, step]");
+  });
+
+  test("an updater of reactive.from received as a value is the dependency itself", () => {
+    const code = `
+      import { useState } from "react";
+      import { reactive } from "react-preprocessor";
+      export const C = (props: { onChange: (f: (n: number) => number) => void }) => {
+        const [state, setState] = useState(0);
+        const n = reactive.from(state, setState);
+        const m = reactive.from(state, props.onChange);
+        reactive.effect(() => {
+          n.update((old) => old + 1);
+          m.update((old) => old + 1);
+        });
+        return null;
+      };
+    `;
+    expect(dependencies(transform(code))).toBe("[setState, props.onChange]");
   });
 
   test("a lens depends on the focused part", () => {
@@ -424,8 +443,8 @@ describe("reactive.effect and the order of declarations", () => {
     expect(dependencies(transform(code))).toBe("[log, cnt]");
   });
 
-  test("the updater of reactive.from is a dependency", () => {
-    expect(dependencies(transform(clock(declaration, "")))).toBe("[setClock]");
+  test("what the updater of reactive.from reads is a dependency", () => {
+    expect(dependencies(transform(clock(declaration, "")))).toBe("[dispatch]");
   });
 
   test("reactive.from declared after the effect is rejected, not silently left out", () => {
@@ -1167,6 +1186,13 @@ describe("type-aware props", () => {
     expect(() => transform(code, file, true)).toThrow(/cannot be used as a plain value/);
   });
 
+  test("a reactive value bound in a form that is not unpacked is rejected, not left as the box", () => {
+    const [code, file] = read("Boxed.tsx");
+    expect(() => transform(code, file, true)).toThrow(
+      /The reactive value `on` must be bound with `const` to a plain name/,
+    );
+  });
+
   test("without types, props declared in another file are not recognised", () => {
     // Reading a missed value with `$` is an error instead of passing silently
     const [code, file] = read("Item.tsx");
@@ -1202,5 +1228,46 @@ describe("several tsconfig projects", () => {
     const output = transform(readFileSync(file, "utf8"), file, true);
     expect(output).toContain("{required && <span>*</span>}");
     expect(output).not.toContain("value:");
+  });
+});
+
+/** A component that receives `on` from a hook, bound as written */
+const hook = (binding: string): string => `
+  import { reactive, type Reactive } from "react-preprocessor";
+  declare const useOne: () => Reactive<number>;
+  export const C = () => {
+    ${binding}
+    return <button onClick={() => on.update((n) => n + 1)}>{on}</button>;
+  };
+`;
+
+describe("receiving a reactive value", () => {
+  test("under a type assertion, the value is unpacked", () => {
+    for (const binding of [
+      "const on: Reactive<number> = useOne()!;",
+      "const on: Reactive<number> = useOne() as Reactive<number>;",
+    ]) {
+      expect(transform(hook(binding))).toContain("const {\n    value: on,\n    update: setOn\n  }");
+    }
+  });
+
+  test("a form that would leave the box in place is rejected", () => {
+    expect(() => transform(hook("let on: Reactive<number> = useOne();"))).toThrow(
+      /The reactive value `on` must be bound with `const` to a plain name, directly to what gives it/,
+    );
+  });
+
+  test("an item of an array received from a hook is unpacked", () => {
+    const code = `
+      import { reactive, type Reactive } from "react-preprocessor";
+      export const usePair = (): [Reactive<number>, () => void] => {
+        const on = reactive.new(0);
+        return [on, () => on.set(0)];
+      };
+    `;
+    const output = transform(code);
+    expect(output).toContain(
+      "return [{\n    value: on,\n    update: setOn\n  }, () => setOn(() => 0)];",
+    );
   });
 });
